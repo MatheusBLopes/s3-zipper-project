@@ -1,54 +1,101 @@
-# S3 ZIP Jobs (Cenário A) — Infra mínima e streaming sem estourar memória
+# S3 ZIP Jobs - Serverless PDF Archiving Service
 
-Este projeto cria uma API para receber uma lista de PDFs em um bucket S3, gerar um ZIP **em streaming** (sem carregar tudo em memória) e disponibilizar uma **URL pré‑assinada** para download.
+A serverless AWS-based service that creates ZIP archives from PDF files stored in S3 buckets using **streaming processing** to handle large files without memory overflow.
 
-## Arquitetura (Mermaid)
+## 🏗️ Architecture
 
 ```mermaid
 flowchart LR
-    client[Cliente] -->|POST /zip-jobs<br/>(lista de PDFs)| apigw[API Gateway HTTP]
-    apigw --> enqueue[Lambda Enqueue<br/>(cria job + envia p/ SQS)]
+    client[Client] -->|POST /zip-jobs<br/>(list of PDFs)| apigw[API Gateway HTTP]
+    apigw --> enqueue[Lambda Enqueue<br/>(creates job + sends to SQS)]
     enqueue -->|JobId + status=PENDING| ddb[(DynamoDB<br/>Job Status)]
-    enqueue -->|Mensagem job| sqs[(SQS Queue)]
+    enqueue -->|Job message| sqs[(SQS Queue)]
     sqs --> zipper[Lambda Zipper<br/>(streaming ZIP -> S3)]
-    zipper -->|Leitura streaming| s3src[(S3 PDFs Origem)]
-    zipper -->|Multipart Upload| s3dst[(S3 ZIP Gerado)]
+    zipper -->|Streaming read| s3src[(S3 Source PDFs)]
+    zipper -->|Multipart Upload| s3dst[(S3 Generated ZIP)]
     zipper -->|status=READY<br/>+ outputKey + downloadUrl| ddb
     client <-->|GET /zip-jobs/{id}| apigw
     apigw <--> ddb
-    apigw -->|downloadUrl se READY| client
+    apigw -->|downloadUrl if READY| client
 ```
 
-### Fluxo
-1. `POST /zip-jobs` recebe `keys` (S3 object keys) e cria um **job** no DynamoDB com `status=PENDING`, depois publica a mensagem na **SQS**.
-2. A **Lambda Zipper** (assinante da SQS) lê cada PDF do S3 **em streaming**, gera o ZIP com **zipstream-ng** e envia para o S3 via **Multipart Upload**.
-3. Ao finalizar, atualiza o DynamoDB com `status=READY` e grava `downloadUrl` (pré‑assinada).
-4. `GET /zip-jobs/{id}` retorna o status e a `downloadUrl` quando disponível.
+### 🔄 Processing Flow
 
-### Como evita estouro de memória?
-- Leitura **streaming** do S3 (`iter_chunks`) e escrita **streaming** para outro objeto no S3 com **Multipart Upload**.
-- Não usa `/tmp` nem `BytesIO` gigantes; o buffer é fixo (ex.: 8 MB).
+1. **Job Creation**: `POST /zip-jobs` receives a list of S3 object keys and creates a job in DynamoDB with `status=PENDING`, then publishes a message to SQS
+2. **Streaming Processing**: The **Zipper Lambda** (SQS subscriber) reads each PDF from S3 **in streaming mode**, generates a ZIP using **zipstream-ng**, and uploads to S3 via **Multipart Upload**
+3. **Completion**: Updates DynamoDB with `status=READY` and stores the `downloadUrl` (presigned URL)
+4. **Status Check**: `GET /zip-jobs/{id}` returns the status and `downloadUrl` when available
 
-## Requisitos
+### 🚀 Memory Optimization
+
+- **Streaming S3 reads** (`iter_chunks`) and **streaming S3 writes** using **Multipart Upload**
+- No `/tmp` or large `BytesIO` usage; fixed buffer size (8MB)
+- Handles large file collections without memory overflow
+
+## 📋 Requirements
+
 - Terraform >= 1.5
-- AWS CLI configurado
-- Python 3.11+ (para empacotar dependências das Lambdas)
-- Permissões na conta AWS
+- AWS CLI configured with appropriate permissions
+- Python 3.11+ (for Lambda package dependencies)
+- AWS account with sufficient permissions
 
-## Variáveis principais (Terraform)
-Veja `infra/variables.tf`. Principais:
-- `project_name` (prefixo dos recursos)
-- `aws_region`
-- `src_bucket_name` (bucket de origem dos PDFs)
-- `dst_bucket_name` (bucket onde o ZIP será gravado, pode ser o mesmo do `src`)
-- `dst_prefix` (ex.: `zips/`)
-- `presign_ttl_seconds` (padrão 86400 = 24h)
+## ⚙️ Configuration
 
-## API Endpoints
+### Main Terraform Variables
+
+See `infra/variables.tf`. Key variables:
+
+- `project_name` - Resource prefix (default: "s3-zip-jobs")
+- `aws_region` - AWS region (default: "us-east-1")
+- `src_bucket_name` - Source bucket for PDFs (required)
+- `dst_bucket_name` - Destination bucket for ZIP files (required)
+- `dst_prefix` - Destination prefix (default: "zips/")
+- `presign_ttl_seconds` - Presigned URL TTL (default: 86400 = 24h)
+
+### Environment Setup
+
+1. Copy the environment template:
+   ```bash
+   cp scripts/env.example .env
+   ```
+
+2. Edit `.env` with your configuration:
+   ```bash
+   # S3 bucket names (must be globally unique)
+   SRC_BUCKET=your-source-bucket-name
+   DST_BUCKET=your-destination-bucket-name
+   DST_PREFIX=zips/
+   
+   # API Gateway URL (filled after terraform apply)
+   API_BASE=https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com
+   ```
+
+## 🚀 Quick Start
+
+```bash
+# 1. Configure environment variables
+cp scripts/env.example .env
+# Edit .env with your bucket names
+
+# 2. Build Lambda packages
+make build
+
+# 3. Deploy infrastructure (creates AWS resources)
+make tf-init
+make tf-apply
+
+# 4. Upload test PDFs
+scripts/upload_pdfs.sh examples/*.pdf
+
+# 5. Test complete workflow
+scripts/test_flow.sh
+```
+
+## 📡 API Endpoints
 
 ### Base URL
 ```
-https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com
+https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com
 ```
 
 ### 1. Create ZIP Job
@@ -59,124 +106,151 @@ Creates a new ZIP job and returns a job ID for tracking.
 **Request Body:**
 ```json
 {
-  "sourceBucket": "s3-zip-jobs-source-2024",
-  "targetBucket": "s3-zip-jobs-destination-2024", 
+  "sourceBucket": "your-source-bucket",
+  "targetBucket": "your-destination-bucket",
   "targetPrefix": "zips/",
-  "keys": [
-    "uploads/document1.pdf",
-    "uploads/document2.pdf"
-  ]
+  "keys": ["uploads/file1.pdf", "uploads/file2.pdf"]
+}
+```
+
+**Response:**
+```json
+{
+  "jobId": "12345678-1234-1234-1234-123456789abc",
+  "status": "PENDING"
 }
 ```
 
 **cURL Example:**
 ```bash
-curl -X POST https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs \
+curl -X POST https://your-api.execute-api.us-east-1.amazonaws.com/zip-jobs \
   -H "Content-Type: application/json" \
   -d '{
-    "sourceBucket": "s3-zip-jobs-source-2024",
-    "targetBucket": "s3-zip-jobs-destination-2024",
+    "sourceBucket": "your-source-bucket",
+    "targetBucket": "your-destination-bucket", 
     "targetPrefix": "zips/",
     "keys": ["uploads/test.pdf"]
   }'
 ```
 
-**Response (202 Created):**
-```json
-{
-  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
-  "status": "PENDING"
-}
-```
-
 ### 2. Check Job Status
 **GET** `/zip-jobs/{jobId}`
 
-Retrieves the current status of a ZIP job.
+Returns the current status of a ZIP job.
 
-**cURL Example:**
-```bash
-curl -X GET https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf
-```
-
-**Response - Job Pending (200 OK):**
+**Response (PENDING):**
 ```json
 {
-  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
+  "jobId": "12345678-1234-1234-1234-123456789abc",
   "status": "PENDING"
 }
 ```
 
-**Response - Job Ready (200 OK):**
+**Response (READY):**
 ```json
 {
-  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
+  "jobId": "12345678-1234-1234-1234-123456789abc",
   "status": "READY",
-  "downloadUrl": "https://s3-zip-jobs-destination-2024.s3.amazonaws.com/zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip?AWSAccessKeyId=...",
-  "targetBucket": "s3-zip-jobs-destination-2024",
-  "targetKey": "zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip"
+  "downloadUrl": "https://s3.amazonaws.com/bucket/zips/file.zip?AWSAccessKeyId=...",
+  "targetBucket": "your-destination-bucket",
+  "targetKey": "zips/12345678-1234-1234-1234-123456789abc.zip"
 }
 ```
-
-**Response - Job Not Found (404 Not Found):**
-```json
-{
-  "error": "job não encontrado"
-}
-```
-
-### 3. Download ZIP File
-Once a job status is `READY`, use the `downloadUrl` from the status response to download the ZIP file.
 
 **cURL Example:**
 ```bash
-curl -O "https://s3-zip-jobs-destination-2024.s3.amazonaws.com/zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip?AWSAccessKeyId=..."
+curl -X GET https://your-api.execute-api.us-east-1.amazonaws.com/zip-jobs/12345678-1234-1234-1234-123456789abc
 ```
 
-## Uso rápido
+**Download the ZIP:**
+```bash
+curl -O "https://s3.amazonaws.com/bucket/zips/file.zip?AWSAccessKeyId=..."
+```
+
+## 📁 Project Structure
+
+- `infra/` - Terraform infrastructure for API Gateway HTTP, 3 Lambdas (enqueue/status/zipper), SQS, DynamoDB, S3, IAM, and CloudWatch (1-day retention)
+- `lambdas/` - Lambda function code with CloudWatch logging
+- `scripts/` - Helper scripts for PDF upload and end-to-end testing
+- `Makefile` - Build/Deploy/Destroy and utility commands
+
+## 🛠️ Available Scripts
+
+### PDF Generation and Upload
 
 ```bash
-# 1) Configure variáveis
-cp scripts/env.example .env
-# Edite .env (nomes dos buckets etc.)
+# Generate 500 sample PDF files
+scripts/generate_pdfs.sh 500
 
-# 2) Build dos pacotes das Lambdas
-make build
+# Upload files to S3 with optimized settings
+scripts/bulk_upload.sh --parallel 20 --batch 50 examples
 
-# 3) Provisionar infra (cuidado: cria recursos na sua conta)
-make tf-init
-make tf-apply
+# Generate and upload in one command
+scripts/bulk_upload.sh --generate 500 --parallel 20 --batch 50
+```
 
-# 4) Subir alguns PDFs para teste (ajuste SRC_BUCKET no .env)
-scripts/upload_pdfs.sh examples/*.pdf
+### Bulk Upload Options
 
-# 5) Testar fluxo completo
+- `--prefix PREFIX` - S3 prefix (default: `uploads/`)
+- `--parallel NUM` - Number of parallel uploads (default: 10)
+- `--batch NUM` - Batch size for processing (default: 50)
+- `--generate NUM` - Generate NUM sample PDF files
+
+### ZIP Creation and Testing
+
+```bash
+# Create ZIP with all PDFs from uploads/ prefix
 scripts/test_flow.sh
+
+# Create ZIP from specific prefix
+scripts/test_flow.sh documents/
+
+# Create ZIP from entire bucket
+scripts/test_flow.sh ""
+
+# Get help
+scripts/test_flow.sh --help
 ```
 
-## Exemplo de uso completo via cURL
+## 💰 Cost Optimization
+
+All services are configured with **minimal/on-demand** settings:
+- DynamoDB on-demand pricing
+- Standard SQS pricing
+- Lambda with modest memory allocation
+- Simple S3 buckets
+- CloudWatch logs with **1-day retention**
+
+## 🧹 Cleanup
 
 ```bash
-# 1. Upload de PDFs para S3 (usando AWS CLI)
-aws s3 cp document.pdf s3://s3-zip-jobs-source-2024/uploads/
+# Remove all AWS resources (⚠️ destroys data in buckets)
+make tf-destroy
+```
 
-# 2. Criar job de ZIP
-JOB_RESPONSE=$(curl -s -X POST https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs \
+## 📊 Complete Usage Example
+
+```bash
+# 1. Upload PDFs to S3 (using AWS CLI)
+aws s3 cp document.pdf s3://your-source-bucket/uploads/
+
+# 2. Create ZIP job
+JOB_RESPONSE=$(curl -s -X POST https://your-api.execute-api.us-east-1.amazonaws.com/zip-jobs \
   -H "Content-Type: application/json" \
   -d '{
-    "sourceBucket": "s3-zip-jobs-source-2024",
-    "targetBucket": "s3-zip-jobs-destination-2024",
+    "sourceBucket": "your-source-bucket",
+    "targetBucket": "your-destination-bucket",
     "targetPrefix": "zips/",
     "keys": ["uploads/document.pdf"]
   }')
 
-# 3. Extrair jobId
+# 3. Extract job ID
 JOB_ID=$(echo $JOB_RESPONSE | jq -r .jobId)
-echo "Job criado: $JOB_ID"
+echo "Job created: $JOB_ID"
 
-# 4. Aguardar conclusão (polling)
+# 4. Wait for completion (polling)
 while true; do
-  STATUS_RESPONSE=$(curl -s https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs/$JOB_ID)
+  STATUS_RESPONSE=$(curl -s https://your-api.execute-api.us-east-1.amazonaws.com/zip-jobs/$JOB_ID)
   STATUS=$(echo $STATUS_RESPONSE | jq -r .status)
   echo "Status: $STATUS"
   
@@ -188,20 +262,50 @@ while true; do
   elif [ "$STATUS" = "PENDING" ]; then
     sleep 5
   else
-    echo "Erro: $STATUS_RESPONSE"
+    echo "Error: $STATUS_RESPONSE"
     break
   fi
 done
 ```
 
-## Estrutura
+## 🔧 Makefile Commands
 
-- `infra/` — Terraform para API Gateway HTTP, 3 Lambdas (enqueue/status/zipper), SQS, DynamoDB, S3, IAM e CloudWatch (retention 1 dia).
-- `lambdas/` — Código das Lambdas com logs no CloudWatch.
-- `scripts/` — Auxiliares para upload de PDFs e teste fim‑a‑fim.
-- `Makefile` — Build/Deploy/Destroy e utilitários.
+```bash
+# Build Lambda packages
+make build
 
-## Custos
-Todos os serviços estão na configuração **mínima**/sob demanda: DynamoDB on-demand, SQS padrão, Lambda com memória modesta, buckets simples, retenção de logs de **1 dia**.
+# Deploy infrastructure
+make tf-init
+make tf-apply
 
-> **Limpeza:** `make tf-destroy` remove todos os recursos (atenção a dados nos buckets).
+# Test workflow
+make test-flow
+
+# Generate sample PDFs
+make generate-pdfs COUNT=500
+
+# Bulk upload files
+make bulk-upload ARGS="--generate 500"
+
+# Clean up
+make tf-destroy
+```
+
+## 🎯 Use Cases
+
+- **Document Archiving**: Bundle multiple PDFs into organized archives
+- **Batch Processing**: Handle large collections of documents efficiently
+- **API Integration**: Integrate with existing systems via REST API
+- **Cost-Effective Storage**: Compress and organize files for long-term storage
+- **On-Demand Packaging**: Create ZIP files only when needed
+
+## 🔍 Monitoring and Debugging
+
+- **CloudWatch Logs**: All Lambda functions log to CloudWatch with 1-day retention
+- **DynamoDB**: Job status tracking and metadata storage
+- **SQS**: Reliable message queuing for job processing
+- **S3**: Source files and generated ZIP archives
+
+## 📝 License
+
+This project is open source and available under the MIT License.
