@@ -112,3 +112,6 @@ python/
 # Temporary files
 tmp/
 temp/
+
+# ASDF versions
+.tool-versions

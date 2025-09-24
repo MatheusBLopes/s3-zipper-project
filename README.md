@@ -44,6 +44,95 @@ Veja `infra/variables.tf`. Principais:
 - `dst_prefix` (ex.: `zips/`)
 - `presign_ttl_seconds` (padrão 86400 = 24h)
 
+## API Endpoints
+
+### Base URL
+```
+https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com
+```
+
+### 1. Create ZIP Job
+**POST** `/zip-jobs`
+
+Creates a new ZIP job and returns a job ID for tracking.
+
+**Request Body:**
+```json
+{
+  "sourceBucket": "s3-zip-jobs-source-2024",
+  "targetBucket": "s3-zip-jobs-destination-2024", 
+  "targetPrefix": "zips/",
+  "keys": [
+    "uploads/document1.pdf",
+    "uploads/document2.pdf"
+  ]
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceBucket": "s3-zip-jobs-source-2024",
+    "targetBucket": "s3-zip-jobs-destination-2024",
+    "targetPrefix": "zips/",
+    "keys": ["uploads/test.pdf"]
+  }'
+```
+
+**Response (202 Created):**
+```json
+{
+  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
+  "status": "PENDING"
+}
+```
+
+### 2. Check Job Status
+**GET** `/zip-jobs/{jobId}`
+
+Retrieves the current status of a ZIP job.
+
+**cURL Example:**
+```bash
+curl -X GET https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf
+```
+
+**Response - Job Pending (200 OK):**
+```json
+{
+  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
+  "status": "PENDING"
+}
+```
+
+**Response - Job Ready (200 OK):**
+```json
+{
+  "jobId": "1b0364c0-13cf-47d5-b9f7-67a7d8708eaf",
+  "status": "READY",
+  "downloadUrl": "https://s3-zip-jobs-destination-2024.s3.amazonaws.com/zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip?AWSAccessKeyId=...",
+  "targetBucket": "s3-zip-jobs-destination-2024",
+  "targetKey": "zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip"
+}
+```
+
+**Response - Job Not Found (404 Not Found):**
+```json
+{
+  "error": "job não encontrado"
+}
+```
+
+### 3. Download ZIP File
+Once a job status is `READY`, use the `downloadUrl` from the status response to download the ZIP file.
+
+**cURL Example:**
+```bash
+curl -O "https://s3-zip-jobs-destination-2024.s3.amazonaws.com/zips/1b0364c0-13cf-47d5-b9f7-67a7d8708eaf.zip?AWSAccessKeyId=..."
+```
+
 ## Uso rápido
 
 ```bash
@@ -63,6 +152,46 @@ scripts/upload_pdfs.sh examples/*.pdf
 
 # 5) Testar fluxo completo
 scripts/test_flow.sh
+```
+
+## Exemplo de uso completo via cURL
+
+```bash
+# 1. Upload de PDFs para S3 (usando AWS CLI)
+aws s3 cp document.pdf s3://s3-zip-jobs-source-2024/uploads/
+
+# 2. Criar job de ZIP
+JOB_RESPONSE=$(curl -s -X POST https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceBucket": "s3-zip-jobs-source-2024",
+    "targetBucket": "s3-zip-jobs-destination-2024",
+    "targetPrefix": "zips/",
+    "keys": ["uploads/document.pdf"]
+  }')
+
+# 3. Extrair jobId
+JOB_ID=$(echo $JOB_RESPONSE | jq -r .jobId)
+echo "Job criado: $JOB_ID"
+
+# 4. Aguardar conclusão (polling)
+while true; do
+  STATUS_RESPONSE=$(curl -s https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs/$JOB_ID)
+  STATUS=$(echo $STATUS_RESPONSE | jq -r .status)
+  echo "Status: $STATUS"
+  
+  if [ "$STATUS" = "READY" ]; then
+    DOWNLOAD_URL=$(echo $STATUS_RESPONSE | jq -r .downloadUrl)
+    echo "Download URL: $DOWNLOAD_URL"
+    curl -O "$DOWNLOAD_URL"
+    break
+  elif [ "$STATUS" = "PENDING" ]; then
+    sleep 5
+  else
+    echo "Erro: $STATUS_RESPONSE"
+    break
+  fi
+done
 ```
 
 ## Estrutura

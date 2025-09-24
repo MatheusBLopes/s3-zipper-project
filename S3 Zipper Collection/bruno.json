@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "S3 Zipper Collection",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

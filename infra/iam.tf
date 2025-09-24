@@ -29,7 +29,7 @@ data "aws_iam_policy_document" "lambda_policy" {
 
   statement {
     sid = "SQSAccess"
-    actions = ["sqs:SendMessage","sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"]
+    actions = ["sqs:SendMessage","sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl","sqs:ListQueues"]
     resources = [aws_sqs_queue.jobs_queue.arn]
   }
 

@@ -1,0 +1,26 @@
+meta {
+  name: /zip-jobs
+  type: http
+  seq: 1
+}
+
+post {
+  url: https://s64dnr9vrk.execute-api.us-east-1.amazonaws.com/zip-jobs
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "sourceBucket": "s3-zip-jobs-source-2024",
+    "targetBucket": "s3-zip-jobs-destination-2024", 
+    "targetPrefix": "zips/",
+    "keys": [
+      "uploads/test.pdf"
+    ]
+  }
+}
+
+settings {
+  encodeUrl: true
+}

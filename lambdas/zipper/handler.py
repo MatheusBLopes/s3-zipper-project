@@ -2,7 +2,7 @@ import os
 import json
 import boto3
 import logging
-from zipstream import ZipFile  # zipstream-ng
+from zipstream import ZipStream  # zipstream-ng
 from botocore.config import Config
 from datetime import datetime, timezone, timedelta
 
@@ -26,11 +26,11 @@ def s3_stream_object(bucket, key, chunk_size=DEFAULT_CHUNK):
             yield chunk
 
 def zip_members_generator(src_bucket, keys):
-    z = ZipFile(mode="w", compression=0)  # PDFs geralmente já comprimidos
+    z = ZipStream(compress_type=0)  # PDFs geralmente já comprimidos
     for key in keys:
         arcname = os.path.basename(key)
         logger.info("Adicionando ao ZIP: %s", key)
-        z.write_iter(arcname, s3_stream_object(src_bucket, key))
+        z.add(s3_stream_object(src_bucket, key), arcname)
     for data in z:
         yield data
 
