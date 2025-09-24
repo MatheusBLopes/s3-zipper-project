@@ -115,3 +115,6 @@ temp/
 
 # ASDF versions
 .tool-versions
+
+# Examples
+examples/
