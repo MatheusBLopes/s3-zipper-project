@@ -6,17 +6,17 @@ A serverless AWS-based service that creates ZIP archives from PDF files stored i
 
 ```mermaid
 flowchart LR
-    client[Client] -->|POST /zip-jobs<br/>(list of PDFs)| apigw[API Gateway HTTP]
-    apigw --> enqueue[Lambda Enqueue<br/>(creates job + sends to SQS)]
-    enqueue -->|JobId + status=PENDING| ddb[(DynamoDB<br/>Job Status)]
-    enqueue -->|Job message| sqs[(SQS Queue)]
-    sqs --> zipper[Lambda Zipper<br/>(streaming ZIP -> S3)]
-    zipper -->|Streaming read| s3src[(S3 Source PDFs)]
-    zipper -->|Multipart Upload| s3dst[(S3 Generated ZIP)]
-    zipper -->|status=READY<br/>+ outputKey + downloadUrl| ddb
-    client <-->|GET /zip-jobs/{id}| apigw
+    client[Client] -->|"POST /zip-jobs<br/>(list of PDFs)"| apigw[API Gateway HTTP]
+    apigw --> enqueue["Lambda Enqueue<br/>(creates job + sends to SQS)"]
+    enqueue -->|"JobId + status=PENDING"| ddb[("DynamoDB<br/>Job Status")]
+    enqueue -->|"Job message"| sqs[("SQS Queue")]
+    sqs --> zipper["Lambda Zipper<br/>(streaming ZIP -> S3)"]
+    zipper -->|"Streaming read"| s3src[("S3 Source PDFs")]
+    zipper -->|"Multipart Upload"| s3dst[("S3 Generated ZIP")]
+    zipper -->|"status=READY<br/>+ outputKey + downloadUrl"| ddb
+    client <-->|"GET /zip-jobs/{id}"| apigw
     apigw <--> ddb
-    apigw -->|downloadUrl if READY| client
+    apigw -->|"downloadUrl if READY"| client
 ```
 
 ### 🔄 Processing Flow
